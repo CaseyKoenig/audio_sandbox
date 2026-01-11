@@ -2,6 +2,8 @@ extern crate anyhow;
 extern crate clap;
 extern crate cpal;
 
+use std::env;
+
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SizedSample, I24, U24,
@@ -9,7 +11,31 @@ use cpal::{
 use cpal::{FromSample, Sample};
 
 fn main() -> anyhow::Result<()> {
-    let stream = stream_setup_for()?;
+    // read args
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 1
+    {
+        println!("Usage: cargo run <vol>");
+    }
+
+    let vol_str = &args[1];
+    let vol_res: Result<f32, _> = vol_str.parse();
+    let mut vol: f32 = 0.0;
+    match vol_res
+    {
+        Ok(value) => 
+        {
+            println!("Volume: {}", value);
+            vol = value;
+        }
+
+        Err(e) => 
+        {
+            eprintln!("Failed to parse float: {}", e);
+        }
+    }
+    
+    let stream = stream_setup_for(vol)?;
     stream.play()?;
     std::thread::sleep(std::time::Duration::from_millis(4000));
     Ok(())
@@ -27,6 +53,7 @@ pub struct Oscillator {
     pub waveform: Waveform,
     pub current_sample_index: f32,
     pub frequency_hz: f32,
+    pub vol_gain: f32,
 }
 
 impl Oscillator {
@@ -40,7 +67,7 @@ impl Oscillator {
 
     fn calculate_sine_output_from_freq(&self, freq: f32) -> f32 {
         let two_pi = 2.0 * std::f32::consts::PI;
-        (self.current_sample_index * freq * two_pi / self.sample_rate).sin()
+        self.vol_gain * (self.current_sample_index * freq * two_pi / self.sample_rate).sin()
     }
 
     fn is_multiple_of_freq_above_nyquist(&self, multiple: f32) -> bool {
@@ -57,7 +84,8 @@ impl Oscillator {
         let mut output = 0.0;
         let mut i = 1;
         while !self.is_multiple_of_freq_above_nyquist(i as f32) {
-            let gain = 1.0 / (i as f32).powf(gain_exponent);
+            let mut gain = 1.0 / (i as f32).powf(gain_exponent);
+            gain *= self.vol_gain;
             output += gain * self.calculate_sine_output_from_freq(self.frequency_hz * i as f32);
             i += harmonic_index_increment;
         }
@@ -86,24 +114,24 @@ impl Oscillator {
     }
 }
 
-pub fn stream_setup_for() -> Result<cpal::Stream, anyhow::Error>
+pub fn stream_setup_for(i_vol_gain: f32) -> Result<cpal::Stream, anyhow::Error>
 where
 {
     let (_host, device, config) = host_device_setup()?;
 
     match config.sample_format() {
-        cpal::SampleFormat::I8 => make_stream::<i8>(&device, &config.into()),
-        cpal::SampleFormat::I16 => make_stream::<i16>(&device, &config.into()),
-        cpal::SampleFormat::I24 => make_stream::<I24>(&device, &config.into()),
-        cpal::SampleFormat::I32 => make_stream::<i32>(&device, &config.into()),
-        cpal::SampleFormat::I64 => make_stream::<i64>(&device, &config.into()),
-        cpal::SampleFormat::U8 => make_stream::<u8>(&device, &config.into()),
-        cpal::SampleFormat::U16 => make_stream::<u16>(&device, &config.into()),
-        cpal::SampleFormat::U24 => make_stream::<U24>(&device, &config.into()),
-        cpal::SampleFormat::U32 => make_stream::<u32>(&device, &config.into()),
-        cpal::SampleFormat::U64 => make_stream::<u64>(&device, &config.into()),
-        cpal::SampleFormat::F32 => make_stream::<f32>(&device, &config.into()),
-        cpal::SampleFormat::F64 => make_stream::<f64>(&device, &config.into()),
+        cpal::SampleFormat::I8 => make_stream::<i8>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::I16 => make_stream::<i16>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::I24 => make_stream::<I24>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::I32 => make_stream::<i32>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::I64 => make_stream::<i64>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::U8 => make_stream::<u8>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::U16 => make_stream::<u16>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::U24 => make_stream::<U24>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::U32 => make_stream::<u32>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::U64 => make_stream::<u64>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::F32 => make_stream::<f32>(&device, &config.into(), i_vol_gain),
+        cpal::SampleFormat::F64 => make_stream::<f64>(&device, &config.into(), i_vol_gain),
         sample_format => Err(anyhow::Error::msg(format!(
             "Unsupported sample format '{sample_format}'"
         ))),
@@ -128,6 +156,7 @@ pub fn host_device_setup(
 pub fn make_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
+    i_vol_gain: f32,
 ) -> Result<cpal::Stream, anyhow::Error>
 where
     T: SizedSample + FromSample<f32>,
@@ -138,6 +167,7 @@ where
         sample_rate: config.sample_rate as f32,
         current_sample_index: 0.0,
         frequency_hz: 440.0,
+        vol_gain: i_vol_gain,
     };
     let err_fn = |err| eprintln!("Error building output sound stream: {err}");
 
