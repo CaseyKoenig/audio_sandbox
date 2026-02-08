@@ -2,43 +2,78 @@ extern crate anyhow;
 extern crate clap;
 extern crate cpal;
 
-use std::env;
+mod input;
+use crate::input::*;
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SizedSample, I24, U24,
 };
 use cpal::{FromSample, Sample};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 fn main() -> anyhow::Result<()> {
     // read args
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 1
-    {
-        println!("Usage: cargo run <vol>");
-    }
+    // let args: Vec<String> = env::args().collect();
+    // if args.len() != 1
+    // {
+    //     println!("Usage: cargo run <vol>");
+    // }
 
-    let vol_str = &args[1];
-    let vol_res: Result<f32, _> = vol_str.parse();
-    let mut vol: f32 = 0.0;
-    match vol_res
-    {
-        Ok(value) => 
-        {
-            println!("Volume: {}", value);
-            vol = value;
-        }
+    // let vol_str = &args[1];
+    // let vol_res: Result<f32, _> = vol_str.parse();
+    // let mut vol: f32 = 0.0;
+    // match vol_res
+    // {
+    //     Ok(value) => 
+    //     {
+    //         println!("Volume: {}", value);
+    //         vol = value;
+    //     }
 
-        Err(e) => 
-        {
-            eprintln!("Failed to parse float: {}", e);
-        }
-    }
+    //     Err(e) => 
+    //     {
+    //         eprintln!("Failed to parse float: {}", e);
+    //     }
+    // }
     
-    let stream = stream_setup_for(vol)?;
-    stream.play()?;
-    std::thread::sleep(std::time::Duration::from_millis(4000));
-    Ok(())
+    // let stream = stream_setup_for(vol)?;
+    // stream.play()?;
+    // std::thread::sleep(std::time::Duration::from_millis(4000));
+    
+    // read in output stream
+    // let host = cpal::default_host();
+
+    // let device = host
+    //     .default_input_device()
+    //     .expect("No input device available");
+    
+    let device = find_spotify_device().unwrap();
+    let config = device.default_input_config().unwrap();
+
+    println!("Using device: {}", device.description()?);
+    println!("Input config: {:?}", config);
+
+    let rms_value = Arc::new(Mutex::new(0.0f32));
+    let rms_clone = rms_value.clone();
+
+    let err_fn = |err|
+    {
+        eprintln!("Stream error: {}", err);
+    };
+
+    let spotify_in_stream = build_stream(&device, &config.config()
+        , rms_clone, err_fn)?;
+    spotify_in_stream.play()?;
+
+    loop
+    {
+        std::thread::sleep(Duration::from_millis(500));
+
+        let rms = *rms_value.lock().unwrap();
+        println!("RMS: {:.5}", rms);
+    }
 }
 
 pub enum Waveform {
@@ -115,7 +150,6 @@ impl Oscillator {
 }
 
 pub fn stream_setup_for(i_vol_gain: f32) -> Result<cpal::Stream, anyhow::Error>
-where
 {
     let (_host, device, config) = host_device_setup()?;
 
